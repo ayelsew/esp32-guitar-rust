@@ -3,9 +3,10 @@ use esp32_nimble::{
     enums::{AuthReq, SecurityIOCap},
     BLEAdvertisementData, BLEDevice, BLEHIDDevice,
 };
+
 use esp_idf_hal::{delay::FreeRtos, gpio::*, peripherals::Peripherals};
 use esp_idf_sys as _;
-use game_pad::GamePad;
+use game_pad::{GamePad, KeyMap};
 
 mod game_pad;
 mod report_descriptor;
@@ -69,12 +70,6 @@ fn main() {
 
     ble_advertising.lock().start().unwrap();
 
-    let mut keys_report = KeysReport {
-        modifiers: 0,
-        reserved: 0,
-        keys: [0; 6],
-    };
-
     let peripherals = Peripherals::take().unwrap();
 
     let mut led_status = PinDriver::output(peripherals.pins.gpio32).unwrap();
@@ -97,48 +92,46 @@ fn main() {
     tri_btn.set_pull(Pull::Up).unwrap();
     l1_btn.set_pull(Pull::Up).unwrap();
 
-    let mut game_pad = game_pad::GamePad::new();
-
-    let mut cache_report: [u8; 6] = [0; 6];
-
-    let mut send_report = |game_pad: &GamePad| {
-        if *game_pad.strum_up.get() as u8 > 0x00 {
-            keys_report.keys[0] = *game_pad.strum_up.get() as u8;
-        } else {
-            keys_report.keys[0] = *game_pad.strum_down.get() as u8;
-        }
-        
-        keys_report.keys[1] = *game_pad.cross.get() as u8;
-        keys_report.keys[2] = *game_pad.circle.get() as u8;
-        keys_report.keys[3] = *game_pad.square.get() as u8;
-        keys_report.keys[4] = *game_pad.triangule.get() as u8;
-        keys_report.keys[5] = *game_pad.l1.get() as u8;
-
-        if keys_report.keys != cache_report {
-            cache_report = keys_report.keys;
-            input_keyboard.lock().set_from(&keys_report).notify();
-        }
+    let mut keys_report = KeysReport {
+        modifiers: 0,
+        reserved: 0,
+        keys: [0; 6],
     };
 
-    loop {
-        if server.connected_count() > 0 {
-            led_status.set_high().unwrap();
+    let mut buttons_status: [bool; 7] = [false; 7];
+    let mut buttons_cache: [bool; 7] = [false; 7];
+    let mut buttons_codes: [u8; 7] = [KeyMap::NULL.to_u8(); 7];
 
-            game_pad.strum_up.status = pick_up_btn.is_low();
-            game_pad.strum_down.status = pick_down_btn.is_low();
-            //game_pad.enter.status = pick_down_btn.is_low() || 
-            game_pad.cross.status = cro_btn.is_low();
-            game_pad.circle.status = cir_btn.is_low();
-            game_pad.square.status = srq_btn.is_low();
-            game_pad.triangule.status = tri_btn.is_low();
-            game_pad.l1.status = l1_btn.is_low();
-    
-            send_report(&game_pad);
+    led_status.set_high().unwrap();
+
+    loop {
+        buttons_status[0] = pick_up_btn.is_low();
+        buttons_status[1] = pick_down_btn.is_low();
+        buttons_status[2] = cro_btn.is_low();
+        buttons_status[3] = cir_btn.is_low();
+        buttons_status[4] = srq_btn.is_low();
+        buttons_status[5] = tri_btn.is_low();
+        buttons_status[6] = l1_btn.is_low();
+
+        GamePad::to_array_code(&buttons_status, &mut buttons_codes);
+
+        if buttons_status != buttons_cache && server.connected_count() > 0 {
+            // HID report keys only support at least 6 keys
+            // So I truncate StrumUp and StrumDown
+            if buttons_status[0] == true {
+                buttons_codes[1] = buttons_codes[0]
+            }
+
+            keys_report.keys = buttons_codes[1..6].try_into().ok().unwrap();
+
+            input_keyboard
+                .lock()
+                .set_from(&keys_report)
+                .notify();
+
+            buttons_cache.copy_from_slice(&buttons_status);
         }
 
         FreeRtos::delay_ms(1);
-        
     }
 }
-
-
