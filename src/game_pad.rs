@@ -32,8 +32,11 @@ impl GamePad {
     pub fn to_array_code(states: &[bool; 7], result: &mut[u8;7])  {
 
         for (i, state) in states.iter().enumerate() {
-            if *state { result[i] = CODES[i].to_u8() }
+            if *state == true { result[i] = CODES[i].to_u8() }
+            else {result[i] = KeyMap::NULL.to_u8()}
         }
 
+        //println!("states {:?}", states);
+        //println!("result {:?}", result);
     }
 }

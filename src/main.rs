@@ -1,12 +1,14 @@
 #![allow(dead_code)]
+use std::{ffi::{c_void, CString}, ptr::{self}};
+
 use esp32_nimble::{
     enums::{AuthReq, SecurityIOCap},
     BLEAdvertisementData, BLEDevice, BLEHIDDevice,
 };
 
-use esp_idf_hal::{delay::FreeRtos, gpio::*, peripherals::Peripherals};
+use esp_idf_hal::{delay::FreeRtos, gpio::*, peripherals::Peripherals, task};
 use esp_idf_sys as _;
-use game_pad::{GamePad, KeyMap};
+use game_pad::GamePad;
 
 mod game_pad;
 mod report_descriptor;
@@ -21,9 +23,9 @@ struct KeysReport {
     pub keys: [u8; 6],
 }
 
-fn main() {
-    esp_idf_sys::link_patches();
+static mut BUTTONS_CODES: [u8; 7] = [0x00; 7];
 
+extern "C" fn ble_hid_task(_: *mut c_void) {
     let ble_device = BLEDevice::take();
 
     ble_device
@@ -70,6 +72,54 @@ fn main() {
 
     ble_advertising.lock().start().unwrap();
 
+    let mut keys_report = KeysReport {
+        modifiers: 0,
+        reserved: 0,
+        keys: [0; 6],
+    };
+
+    let mut buttons_cache: [u8; 7] = [0x00; 7];
+
+    loop {
+        unsafe {
+            if BUTTONS_CODES != buttons_cache && server.connected_count() > 0 {
+                // HID report keys only support at least 6 keys
+                // So I truncate StrumUp and StrumDown
+                keys_report.keys[0] = if BUTTONS_CODES[0] > 0x00 {
+                    BUTTONS_CODES[0]
+                } else {
+                    BUTTONS_CODES[1]
+                };
+                keys_report.keys[1] = BUTTONS_CODES[2];
+                keys_report.keys[2] = BUTTONS_CODES[3];
+                keys_report.keys[3] = BUTTONS_CODES[4];
+                keys_report.keys[4] = BUTTONS_CODES[5];
+                keys_report.keys[5] = BUTTONS_CODES[6];
+
+                input_keyboard.lock().set_from(&keys_report).notify();
+
+                buttons_cache.copy_from_slice(&mut *ptr::addr_of_mut!(BUTTONS_CODES));
+            } else {
+                FreeRtos::delay_ms(1);
+            }
+        }
+    }
+}
+
+fn main() {
+    esp_idf_sys::link_patches();
+
+    unsafe {
+        task::create(
+            ble_hid_task,
+            CString::new("bluetooth_hid").unwrap().as_c_str(),
+            8192,
+            ptr::null_mut(),
+            5,
+            Some(esp_idf_hal::cpu::Core::Core1),
+        ).unwrap();
+    }
+
     let peripherals = Peripherals::take().unwrap();
 
     let mut led_status = PinDriver::output(peripherals.pins.gpio32).unwrap();
@@ -92,15 +142,7 @@ fn main() {
     tri_btn.set_pull(Pull::Up).unwrap();
     l1_btn.set_pull(Pull::Up).unwrap();
 
-    let mut keys_report = KeysReport {
-        modifiers: 0,
-        reserved: 0,
-        keys: [0; 6],
-    };
-
     let mut buttons_status: [bool; 7] = [false; 7];
-    let mut buttons_cache: [bool; 7] = [false; 7];
-    let mut buttons_codes: [u8; 7] = [KeyMap::NULL.to_u8(); 7];
 
     led_status.set_high().unwrap();
 
@@ -113,23 +155,8 @@ fn main() {
         buttons_status[5] = tri_btn.is_low();
         buttons_status[6] = l1_btn.is_low();
 
-        GamePad::to_array_code(&buttons_status, &mut buttons_codes);
-
-        if buttons_status != buttons_cache && server.connected_count() > 0 {
-            // HID report keys only support at least 6 keys
-            // So I truncate StrumUp and StrumDown
-            if buttons_status[0] == true {
-                buttons_codes[1] = buttons_codes[0]
-            }
-
-            keys_report.keys = buttons_codes[1..6].try_into().ok().unwrap();
-
-            input_keyboard
-                .lock()
-                .set_from(&keys_report)
-                .notify();
-
-            buttons_cache.copy_from_slice(&buttons_status);
+        unsafe {
+            GamePad::to_array_code(&buttons_status, &mut *ptr::addr_of_mut!(BUTTONS_CODES));
         }
 
         FreeRtos::delay_ms(1);
