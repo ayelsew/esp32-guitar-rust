@@ -1,13 +1,21 @@
 #![allow(dead_code)]
-use std::{ffi::{c_void, CString}, ptr::{self}};
+use std::{
+    ffi::{c_void, CString},
+    ptr::{self},
+};
 
 use esp32_nimble::{
     enums::{AuthReq, SecurityIOCap},
     BLEAdvertisementData, BLEDevice, BLEHIDDevice,
 };
 
-use esp_idf_hal::{delay::FreeRtos, gpio::*, peripherals::Peripherals, task};
-use esp_idf_sys as _;
+use esp_idf_hal::{
+    delay::FreeRtos,
+    gpio::*,
+    peripherals::Peripherals,
+    task::{self},
+};
+use esp_idf_sys::{self as _, };
 use game_pad::GamePad;
 
 mod game_pad;
@@ -106,20 +114,7 @@ extern "C" fn ble_hid_task(_: *mut c_void) {
     }
 }
 
-fn main() {
-    esp_idf_sys::link_patches();
-
-    unsafe {
-        task::create(
-            ble_hid_task,
-            CString::new("bluetooth_hid").unwrap().as_c_str(),
-            8192,
-            ptr::null_mut(),
-            5,
-            Some(esp_idf_hal::cpu::Core::Core1),
-        ).unwrap();
-    }
-
+extern "C" fn check_play_buttons_task(_: *mut c_void) {
     let peripherals = Peripherals::take().unwrap();
 
     let mut led_status = PinDriver::output(peripherals.pins.gpio32).unwrap();
@@ -160,5 +155,31 @@ fn main() {
         }
 
         FreeRtos::delay_ms(1);
+    }
+}
+
+fn main() {
+    esp_idf_sys::link_patches();
+
+    unsafe {
+        task::create(
+            ble_hid_task,
+            CString::new("bluetooth_hid").unwrap().as_c_str(),
+            8192,
+            ptr::null_mut(),
+            10,
+            Some(esp_idf_hal::cpu::Core::Core1),
+        )
+        .unwrap();
+
+        task::create(
+            check_play_buttons_task,
+            CString::new("check_play_buttons").unwrap().as_c_str(),
+            8192,
+            ptr::null_mut(),
+            5,
+            Some(esp_idf_hal::cpu::Core::Core0),
+        )
+        .unwrap();
     }
 }
