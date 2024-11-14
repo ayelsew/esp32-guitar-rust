@@ -1,6 +1,7 @@
 #![allow(dead_code)]
 use std::{
     ffi::{c_void, CString},
+    num::NonZero,
     ptr::{self},
 };
 
@@ -10,16 +11,24 @@ use esp32_nimble::{
 };
 
 use esp_idf_hal::{
-    delay::FreeRtos,
     gpio::*,
     peripherals::Peripherals,
-    task::{self},
+    task::{self, notification::Notification},
 };
-use esp_idf_sys::{self as _, };
-use game_pad::GamePad;
+use esp_idf_sys::{self as _};
 
-mod game_pad;
 mod report_descriptor;
+
+const STRUM: u8 = 0x51;
+const ENTER: u8 = 0x28;
+const STRUM_UP: u8 = 0x52;
+const STRUM_DOWN: u8 = 0x51;
+const Q: u8 = 0x14;
+const W: u8 = 0x1a;
+const E: u8 = 0x08;
+const R: u8 = 0x15;
+const T: u8 = 0x17;
+const NULL: u8 = 0x00;
 
 #[repr(packed)]
 struct KeysReport {
@@ -30,8 +39,6 @@ struct KeysReport {
     // Used to pass keys pressed (if all empty it means release)
     pub keys: [u8; 6],
 }
-
-static mut BUTTONS_CODES: [u8; 7] = [0x00; 7];
 
 extern "C" fn ble_hid_task(_: *mut c_void) {
     let ble_device = BLEDevice::take();
@@ -86,38 +93,8 @@ extern "C" fn ble_hid_task(_: *mut c_void) {
         keys: [0; 6],
     };
 
-    let mut buttons_cache: [u8; 7] = [0x00; 7];
-
-    loop {
-        unsafe {
-            if BUTTONS_CODES != buttons_cache && server.connected_count() > 0 {
-                // HID report keys only support at least 6 keys
-                // So I truncate StrumUp and StrumDown
-                keys_report.keys[0] = if BUTTONS_CODES[0] > 0x00 {
-                    BUTTONS_CODES[0]
-                } else {
-                    BUTTONS_CODES[1]
-                };
-                keys_report.keys[1] = BUTTONS_CODES[2];
-                keys_report.keys[2] = BUTTONS_CODES[3];
-                keys_report.keys[3] = BUTTONS_CODES[4];
-                keys_report.keys[4] = BUTTONS_CODES[5];
-                keys_report.keys[5] = BUTTONS_CODES[6];
-
-                input_keyboard.lock().set_from(&keys_report).notify();
-
-                buttons_cache.copy_from_slice(&mut *ptr::addr_of_mut!(BUTTONS_CODES));
-            } else {
-                FreeRtos::delay_ms(1);
-            }
-        }
-    }
-}
-
-extern "C" fn check_play_buttons_task(_: *mut c_void) {
+    // MAP KEYS
     let peripherals = Peripherals::take().unwrap();
-
-    let mut led_status = PinDriver::output(peripherals.pins.gpio32).unwrap();
 
     let mut pick_down_btn = PinDriver::input(peripherals.pins.gpio33).unwrap();
     let mut pick_up_btn = PinDriver::input(peripherals.pins.gpio25).unwrap();
@@ -130,31 +107,117 @@ extern "C" fn check_play_buttons_task(_: *mut c_void) {
 
     pick_down_btn.set_pull(Pull::Up).unwrap();
     pick_up_btn.set_pull(Pull::Up).unwrap();
-
     cro_btn.set_pull(Pull::Up).unwrap();
     cir_btn.set_pull(Pull::Up).unwrap();
     srq_btn.set_pull(Pull::Up).unwrap();
     tri_btn.set_pull(Pull::Up).unwrap();
     l1_btn.set_pull(Pull::Up).unwrap();
 
-    let mut buttons_status: [bool; 7] = [false; 7];
+    // SETUP BUTTON INTERRUPT
 
-    led_status.set_high().unwrap();
+    pick_down_btn
+        .set_interrupt_type(InterruptType::AnyEdge)
+        .unwrap();
+    pick_up_btn
+        .set_interrupt_type(InterruptType::AnyEdge)
+        .unwrap();
+    cro_btn.set_interrupt_type(InterruptType::AnyEdge).unwrap();
+    cir_btn.set_interrupt_type(InterruptType::AnyEdge).unwrap();
+    srq_btn.set_interrupt_type(InterruptType::AnyEdge).unwrap();
+    tri_btn.set_interrupt_type(InterruptType::AnyEdge).unwrap();
+    l1_btn.set_interrupt_type(InterruptType::AnyEdge).unwrap();
+
+
+    let notification = Notification::new();
 
     loop {
-        buttons_status[0] = pick_up_btn.is_low();
-        buttons_status[1] = pick_down_btn.is_low();
-        buttons_status[2] = cro_btn.is_low();
-        buttons_status[3] = cir_btn.is_low();
-        buttons_status[4] = srq_btn.is_low();
-        buttons_status[5] = tri_btn.is_low();
-        buttons_status[6] = l1_btn.is_low();
+        let waker_1 = notification.notifier();
+        let waker_2 = notification.notifier();
+        let waker_3 = notification.notifier();
+        let waker_4 = notification.notifier();
+        let waker_5 = notification.notifier();
+        let waker_6 = notification.notifier();
+        let waker_7 = notification.notifier();
 
         unsafe {
-            GamePad::to_array_code(&buttons_status, &mut *ptr::addr_of_mut!(BUTTONS_CODES));
+            pick_down_btn
+                .subscribe_nonstatic(move || {
+                    waker_1.notify(NonZero::new(1).unwrap());
+                })
+                .unwrap();
+            pick_up_btn
+                .subscribe_nonstatic(move || {
+                    waker_2.notify(NonZero::new(1).unwrap());
+                })
+                .unwrap();
+            cro_btn
+                .subscribe_nonstatic(move || {
+                    waker_3.notify(NonZero::new(1).unwrap());
+                })
+                .unwrap();
+            cir_btn
+                .subscribe_nonstatic(move || {
+                    waker_4.notify(NonZero::new(1).unwrap());
+                })
+                .unwrap();
+            srq_btn
+                .subscribe_nonstatic(move || {
+                    waker_5.notify(NonZero::new(1).unwrap());
+                })
+                .unwrap();
+            tri_btn
+                .subscribe_nonstatic(move || {
+                    waker_6.notify(NonZero::new(1).unwrap());
+                })
+                .unwrap();
+            l1_btn
+                .subscribe_nonstatic(move || {
+                    waker_7.notify(NonZero::new(1).unwrap());
+                })
+                .unwrap();
         }
 
-        FreeRtos::delay_ms(1);
+        // Enable interrupts
+        pick_down_btn.enable_interrupt().unwrap();
+        pick_up_btn.enable_interrupt().unwrap();
+        cro_btn.enable_interrupt().unwrap();
+        cir_btn.enable_interrupt().unwrap();
+        srq_btn.enable_interrupt().unwrap();
+        tri_btn.enable_interrupt().unwrap();
+        l1_btn.enable_interrupt().unwrap();
+
+
+        keys_report.keys[0] = if pick_up_btn.is_low() || pick_down_btn.is_low() {
+            STRUM
+        } else {
+            NULL
+        };
+        keys_report.keys[1] = if cro_btn.is_low() { Q } else { NULL };
+        keys_report.keys[2] = if cir_btn.is_low() { W } else { NULL };
+        keys_report.keys[3] = if srq_btn.is_low() { E } else { NULL };
+        keys_report.keys[4] = if tri_btn.is_low() { R } else { NULL };
+        keys_report.keys[5] = if l1_btn.is_low() { T } else { NULL };
+
+        input_keyboard.lock().set_from(&keys_report).notify();
+
+        // Block until any waker.notify() call
+        notification.wait_any();
+
+
+        // It check value and send again to partially fix a bug
+        // Some times the "release button" is't sent. So it is for that
+        keys_report.keys[0] = if pick_up_btn.is_low() || pick_down_btn.is_low() {
+            STRUM
+        } else {
+            NULL
+        };
+        keys_report.keys[1] = if cro_btn.is_low() { Q } else { NULL };
+        keys_report.keys[2] = if cir_btn.is_low() { W } else { NULL };
+        keys_report.keys[3] = if srq_btn.is_low() { E } else { NULL };
+        keys_report.keys[4] = if tri_btn.is_low() { R } else { NULL };
+        keys_report.keys[5] = if l1_btn.is_low() { T } else { NULL };
+
+        input_keyboard.lock().set_from(&keys_report).notify();
     }
 }
 
@@ -172,14 +235,14 @@ fn main() {
         )
         .unwrap();
 
-        task::create(
-            check_play_buttons_task,
-            CString::new("check_play_buttons").unwrap().as_c_str(),
-            8192,
-            ptr::null_mut(),
-            5,
-            Some(esp_idf_hal::cpu::Core::Core0),
-        )
-        .unwrap();
+        // task::create(
+        //     check_play_buttons_task,
+        //     CString::new("check_play_buttons").unwrap().as_c_str(),
+        //     8192,
+        //     ptr::null_mut(),
+        //     5,
+        //     Some(esp_idf_hal::cpu::Core::Core0),
+        // )
+        // .unwrap();
     }
 }
