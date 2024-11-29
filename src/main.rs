@@ -28,6 +28,7 @@ const W: u8 = 0x1a;
 const E: u8 = 0x08;
 const R: u8 = 0x15;
 const T: u8 = 0x17;
+const H: u8 = 0x0b;
 const NULL: u8 = 0x00;
 
 #[repr(packed)]
@@ -37,20 +38,21 @@ struct KeysReport {
     // I really don't fuck known
     pub reserved: u8,
     // Used to pass keys pressed (if all empty it means release)
-    pub keys: [u8; 6],
+    pub keys: [u8; 7],
 }
 
 extern "C" fn ble_hid_task(_: *mut c_void) {
     let ble_device = BLEDevice::take();
 
+
     ble_device
         .security()
-        .set_auth(AuthReq::all())
+        .set_auth(AuthReq::Bond)
         .set_io_cap(SecurityIOCap::NoInputNoOutput)
         .resolve_rpa();
 
     let server = ble_device.get_server();
-
+    
     server.on_connect(|_s, _c| {
         println!("Connected {:#?}", _c);
     });
@@ -90,20 +92,23 @@ extern "C" fn ble_hid_task(_: *mut c_void) {
     let mut keys_report = KeysReport {
         modifiers: 0,
         reserved: 0,
-        keys: [0; 6],
+        keys: [0; 7],
     };
 
-    // MAP KEYS
+
+    // MAP KEY
     let peripherals = Peripherals::take().unwrap();
 
-    let mut pick_down_btn = PinDriver::input(peripherals.pins.gpio33).unwrap();
+    let mut pick_down_btn   = PinDriver::input(peripherals.pins.gpio33).unwrap();
     let mut pick_up_btn = PinDriver::input(peripherals.pins.gpio25).unwrap();
 
-    let mut cro_btn = PinDriver::input(peripherals.pins.gpio26).unwrap();
-    let mut cir_btn = PinDriver::input(peripherals.pins.gpio27).unwrap();
+    let mut cro_btn  = PinDriver::input(peripherals.pins.gpio26).unwrap();
+    let mut cir_btn   = PinDriver::input(peripherals.pins.gpio27).unwrap();
     let mut srq_btn = PinDriver::input(peripherals.pins.gpio14).unwrap();
-    let mut tri_btn = PinDriver::input(peripherals.pins.gpio12).unwrap();
+    let mut tri_btn  = PinDriver::input(peripherals.pins.gpio12).unwrap();
     let mut l1_btn = PinDriver::input(peripherals.pins.gpio13).unwrap();
+
+    let mut start_btn = PinDriver::input(peripherals.pins.gpio4).unwrap();
 
     pick_down_btn.set_pull(Pull::Up).unwrap();
     pick_up_btn.set_pull(Pull::Up).unwrap();
@@ -112,6 +117,7 @@ extern "C" fn ble_hid_task(_: *mut c_void) {
     srq_btn.set_pull(Pull::Up).unwrap();
     tri_btn.set_pull(Pull::Up).unwrap();
     l1_btn.set_pull(Pull::Up).unwrap();
+    start_btn.set_pull(Pull::Up).unwrap();
 
     // SETUP BUTTON INTERRUPT
 
@@ -126,7 +132,9 @@ extern "C" fn ble_hid_task(_: *mut c_void) {
     srq_btn.set_interrupt_type(InterruptType::AnyEdge).unwrap();
     tri_btn.set_interrupt_type(InterruptType::AnyEdge).unwrap();
     l1_btn.set_interrupt_type(InterruptType::AnyEdge).unwrap();
-
+    start_btn
+        .set_interrupt_type(InterruptType::AnyEdge)
+        .unwrap();
 
     let notification = Notification::new();
 
@@ -138,6 +146,7 @@ extern "C" fn ble_hid_task(_: *mut c_void) {
         let waker_5 = notification.notifier();
         let waker_6 = notification.notifier();
         let waker_7 = notification.notifier();
+        let waker_8 = notification.notifier();
 
         unsafe {
             pick_down_btn
@@ -175,6 +184,11 @@ extern "C" fn ble_hid_task(_: *mut c_void) {
                     waker_7.notify(NonZero::new(1).unwrap());
                 })
                 .unwrap();
+            start_btn
+                .subscribe_nonstatic(move || {
+                    waker_8.notify(NonZero::new(1).unwrap());
+                })
+                .unwrap();
         }
 
         // Enable interrupts
@@ -185,37 +199,40 @@ extern "C" fn ble_hid_task(_: *mut c_void) {
         srq_btn.enable_interrupt().unwrap();
         tri_btn.enable_interrupt().unwrap();
         l1_btn.enable_interrupt().unwrap();
+        start_btn.enable_interrupt().unwrap();
 
-
-        keys_report.keys[0] = if pick_up_btn.is_low() || pick_down_btn.is_low() {
-            STRUM
-        } else {
-            NULL
+        keys_report.keys[0] = NULL;
+        if pick_up_btn.is_low() {
+            keys_report.keys[0] = STRUM_UP;
+        } else if pick_down_btn.is_low() {
+            keys_report.keys[0] = STRUM_DOWN;
         };
         keys_report.keys[1] = if cro_btn.is_low() { Q } else { NULL };
         keys_report.keys[2] = if cir_btn.is_low() { W } else { NULL };
         keys_report.keys[3] = if srq_btn.is_low() { E } else { NULL };
         keys_report.keys[4] = if tri_btn.is_low() { R } else { NULL };
         keys_report.keys[5] = if l1_btn.is_low() { T } else { NULL };
+        keys_report.keys[6] = if start_btn.is_low() { H } else { NULL };
 
         input_keyboard.lock().set_from(&keys_report).notify();
 
         // Block until any waker.notify() call
         notification.wait_any();
 
-
         // It check value and send again to partially fix a bug
         // Some times the "release button" is't sent. So it is for that
-        keys_report.keys[0] = if pick_up_btn.is_low() || pick_down_btn.is_low() {
-            STRUM
-        } else {
-            NULL
+        keys_report.keys[0] = NULL;
+        if pick_up_btn.is_low() {
+            keys_report.keys[0] = STRUM_UP;
+        } else if pick_down_btn.is_low() {
+            keys_report.keys[0] = STRUM_DOWN;
         };
         keys_report.keys[1] = if cro_btn.is_low() { Q } else { NULL };
         keys_report.keys[2] = if cir_btn.is_low() { W } else { NULL };
         keys_report.keys[3] = if srq_btn.is_low() { E } else { NULL };
         keys_report.keys[4] = if tri_btn.is_low() { R } else { NULL };
         keys_report.keys[5] = if l1_btn.is_low() { T } else { NULL };
+        keys_report.keys[6] = if start_btn.is_low() { H } else { NULL };
 
         input_keyboard.lock().set_from(&keys_report).notify();
     }
