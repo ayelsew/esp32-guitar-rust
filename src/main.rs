@@ -1,28 +1,18 @@
 #![allow(dead_code)]
-use std::{
-    ffi::{c_void, CString},
-    num::NonZero,
-    ptr::{self},
-};
+use std::num::NonZero;
 
 use esp32_nimble::{
     enums::{AuthReq, SecurityIOCap},
     BLEAdvertisementData, BLEDevice, BLEHIDDevice,
 };
 
-use esp_idf_hal::{
-    gpio::*,
-    peripherals::Peripherals,
-    task::{self, notification::Notification},
-};
+use esp_idf_hal::{gpio::*, peripherals::Peripherals, task::notification::Notification};
 use esp_idf_sys::{self as _};
 
 mod report_descriptor;
 
-const STRUM: u8 = 0x51;
-const ENTER: u8 = 0x28;
-const STRUM_UP: u8 = 0x52;
-const STRUM_DOWN: u8 = 0x51;
+const STRUM_UP: u8 = 0x51;
+const STRUM_DOWN: u8 = 0x52;
 const Q: u8 = 0x14;
 const W: u8 = 0x1a;
 const E: u8 = 0x08;
@@ -32,18 +22,18 @@ const H: u8 = 0x0b;
 const NULL: u8 = 0x00;
 
 #[repr(packed)]
-struct KeysReport {
-    // Like: ctrl, alt e etc
-    pub modifiers: u8,
-    // I really don't fuck known
-    pub reserved: u8,
-    // Used to pass keys pressed (if all empty it means release)
-    pub keys: [u8; 7],
+struct GamepadReport {
+    // Gamepad buttons (16 buttons)
+    pub buttons: u8, // 16 buttons, represented by a bitmask
+                     // Gamepad axes (2 axes: X, Y)
+                     // pub x_axis: u8, // X axis value (0-127)
+                     // pub y_axis: u8, // Y axis value (0-127)
 }
 
-extern "C" fn ble_hid_task(_: *mut c_void) {
-    let ble_device = BLEDevice::take();
+fn main() {
+    let _ = BLEDevice::set_device_name("GuittarPad").unwrap();
 
+    let ble_device = BLEDevice::take();
 
     ble_device
         .security()
@@ -52,26 +42,25 @@ extern "C" fn ble_hid_task(_: *mut c_void) {
         .resolve_rpa();
 
     let server = ble_device.get_server();
-    
+
     server.on_connect(|_s, _c| {
         println!("Connected {:#?}", _c);
     });
 
     server.on_disconnect(|_c, _r| {
-        println!("Deconnected {:#?} | reason: {:#?}", _c, _r.err().unwrap());
+        println!("Disconnected {:#?} | reason: {:#?}", _c, _r.err().unwrap());
     });
 
     let mut hid = BLEHIDDevice::new(server);
 
-    let input_keyboard = hid.input_report(report_descriptor::KEYBOARD_ID);
-    let _output_keyboard = hid.output_report(report_descriptor::KEYBOARD_ID);
-    let _input_media_keys = hid.input_report(report_descriptor::MEDIA_KEYS_ID);
+    let input_gamepad = hid.input_report(report_descriptor::GAMEPAD_ID);
+    let _output_gamepad = hid.output_report(report_descriptor::GAMEPAD_ID);
 
     hid.manufacturer("Leydev");
     hid.pnp(0x02, 0x05ac, 0x820a, 0x0210);
     hid.hid_info(0x00, 0x01);
 
-    hid.report_map(report_descriptor::HID_REPORT_DISCRIPTOR);
+    hid.report_map(report_descriptor::GAMEPAD_REPORT_DESCRIPTOR);
 
     hid.set_battery_level(100);
 
@@ -89,23 +78,22 @@ extern "C" fn ble_hid_task(_: *mut c_void) {
 
     ble_advertising.lock().start().unwrap();
 
-    let mut keys_report = KeysReport {
-        modifiers: 0,
-        reserved: 0,
-        keys: [0; 7],
+    let mut gamepad_report = GamepadReport {
+        buttons: 0, // Start with all buttons released (0)
+                    // x_axis: 0,  // Default X axis value (center position)
+                    // y_axis: 0,  // Default Y axis value (center position)
     };
 
-
-    // MAP KEY
+    // MAP BUTTONS
     let peripherals = Peripherals::take().unwrap();
 
-    let mut pick_down_btn   = PinDriver::input(peripherals.pins.gpio33).unwrap();
+    let mut pick_down_btn = PinDriver::input(peripherals.pins.gpio33).unwrap();
     let mut pick_up_btn = PinDriver::input(peripherals.pins.gpio25).unwrap();
 
-    let mut cro_btn  = PinDriver::input(peripherals.pins.gpio26).unwrap();
-    let mut cir_btn   = PinDriver::input(peripherals.pins.gpio27).unwrap();
+    let mut cro_btn = PinDriver::input(peripherals.pins.gpio26).unwrap();
+    let mut cir_btn = PinDriver::input(peripherals.pins.gpio27).unwrap();
     let mut srq_btn = PinDriver::input(peripherals.pins.gpio14).unwrap();
-    let mut tri_btn  = PinDriver::input(peripherals.pins.gpio12).unwrap();
+    let mut tri_btn = PinDriver::input(peripherals.pins.gpio12).unwrap();
     let mut l1_btn = PinDriver::input(peripherals.pins.gpio13).unwrap();
 
     let mut start_btn = PinDriver::input(peripherals.pins.gpio4).unwrap();
@@ -120,7 +108,6 @@ extern "C" fn ble_hid_task(_: *mut c_void) {
     start_btn.set_pull(Pull::Up).unwrap();
 
     // SETUP BUTTON INTERRUPT
-
     pick_down_btn
         .set_interrupt_type(InterruptType::AnyEdge)
         .unwrap();
@@ -201,65 +188,74 @@ extern "C" fn ble_hid_task(_: *mut c_void) {
         l1_btn.enable_interrupt().unwrap();
         start_btn.enable_interrupt().unwrap();
 
-        keys_report.keys[0] = NULL;
-        if pick_up_btn.is_low() {
-            keys_report.keys[0] = STRUM_UP;
-        } else if pick_down_btn.is_low() {
-            keys_report.keys[0] = STRUM_DOWN;
-        };
-        keys_report.keys[1] = if cro_btn.is_low() { Q } else { NULL };
-        keys_report.keys[2] = if cir_btn.is_low() { W } else { NULL };
-        keys_report.keys[3] = if srq_btn.is_low() { E } else { NULL };
-        keys_report.keys[4] = if tri_btn.is_low() { R } else { NULL };
-        keys_report.keys[5] = if l1_btn.is_low() { T } else { NULL };
-        keys_report.keys[6] = if start_btn.is_low() { H } else { NULL };
+        // Update the gamepad report based on button presses
+        gamepad_report.buttons = 0; // Reset button states
 
-        input_keyboard.lock().set_from(&keys_report).notify();
+        if pick_up_btn.is_low() {
+            gamepad_report.buttons |= 0x0001; // Set button 1 (Pick up)
+        }
+        if pick_down_btn.is_low() {
+            gamepad_report.buttons |= 0x0002; // Set button 2 (Pick down)
+        }
+        if cro_btn.is_low() {
+            gamepad_report.buttons |= 0x0004; // Set button 3 (Cro)
+        }
+        if cir_btn.is_low() {
+            gamepad_report.buttons |= 0x0008; // Set button 4 (Cir)
+        }
+        if srq_btn.is_low() {
+            gamepad_report.buttons |= 0x0010; // Set button 5 (Srq)
+        }
+        if tri_btn.is_low() {
+            gamepad_report.buttons |= 0x0020; // Set button 6 (Tri)
+        }
+        if l1_btn.is_low() {
+            gamepad_report.buttons |= 0x0040; // Set button 7 (L1)
+        }
+        if start_btn.is_low() {
+            gamepad_report.buttons |= 0x0080; // Set button 8 (Start)
+        }
+
+        // Optionally, you can add joystick axis logic here:
+        // gamepad_report.x_axis = 127; // Example: Centered X axis
+        // gamepad_report.y_axis = 127; // Example: Centered Y axis
+
+        // Send the gamepad report
+        input_gamepad.lock().set_from(&gamepad_report).notify();
+
+        print!("{}", gamepad_report.buttons);
 
         // Block until any waker.notify() call
         notification.wait_any();
 
-        // It check value and send again to partially fix a bug
-        // Some times the "release button" is't sent. So it is for that
-        keys_report.keys[0] = NULL;
+        gamepad_report.buttons = 0; // Reset button states
+
         if pick_up_btn.is_low() {
-            keys_report.keys[0] = STRUM_UP;
-        } else if pick_down_btn.is_low() {
-            keys_report.keys[0] = STRUM_DOWN;
-        };
-        keys_report.keys[1] = if cro_btn.is_low() { Q } else { NULL };
-        keys_report.keys[2] = if cir_btn.is_low() { W } else { NULL };
-        keys_report.keys[3] = if srq_btn.is_low() { E } else { NULL };
-        keys_report.keys[4] = if tri_btn.is_low() { R } else { NULL };
-        keys_report.keys[5] = if l1_btn.is_low() { T } else { NULL };
-        keys_report.keys[6] = if start_btn.is_low() { H } else { NULL };
+            gamepad_report.buttons |= 0x0001; // Set button 1 (Pick up)
+        }
+        if pick_down_btn.is_low() {
+            gamepad_report.buttons |= 0x0002; // Set button 2 (Pick down)
+        }
+        if cro_btn.is_low() {
+            gamepad_report.buttons |= 0x0004; // Set button 3 (Cro)
+        }
+        if cir_btn.is_low() {
+            gamepad_report.buttons |= 0x0008; // Set button 4 (Cir)
+        }
+        if srq_btn.is_low() {
+            gamepad_report.buttons |= 0x0010; // Set button 5 (Srq)
+        }
+        if tri_btn.is_low() {
+            gamepad_report.buttons |= 0x0020; // Set button 6 (Tri)
+        }
+        if l1_btn.is_low() {
+            gamepad_report.buttons |= 0x0040; // Set button 7 (L1)
+        }
+        if start_btn.is_low() {
+            gamepad_report.buttons |= 0x0080; // Set button 8 (Start)
+        }
 
-        input_keyboard.lock().set_from(&keys_report).notify();
-    }
-}
-
-fn main() {
-    esp_idf_sys::link_patches();
-
-    unsafe {
-        task::create(
-            ble_hid_task,
-            CString::new("bluetooth_hid").unwrap().as_c_str(),
-            8192,
-            ptr::null_mut(),
-            10,
-            Some(esp_idf_hal::cpu::Core::Core1),
-        )
-        .unwrap();
-
-        // task::create(
-        //     check_play_buttons_task,
-        //     CString::new("check_play_buttons").unwrap().as_c_str(),
-        //     8192,
-        //     ptr::null_mut(),
-        //     5,
-        //     Some(esp_idf_hal::cpu::Core::Core0),
-        // )
-        // .unwrap();
+        // Optionally, you can check again and resend if needed.
+        input_gamepad.lock().set_from(&gamepad_report).notify();
     }
 }
