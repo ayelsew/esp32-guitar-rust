@@ -42,8 +42,8 @@ struct KeysReport {
 }
 
 extern "C" fn ble_hid_task(_: *mut c_void) {
+    BLEDevice::set_device_name("GuittarPad");
     let ble_device = BLEDevice::take();
-
 
     ble_device
         .security()
@@ -52,7 +52,7 @@ extern "C" fn ble_hid_task(_: *mut c_void) {
         .resolve_rpa();
 
     let server = ble_device.get_server();
-    
+
     server.on_connect(|_s, _c| {
         println!("Connected {:#?}", _c);
     });
@@ -95,17 +95,16 @@ extern "C" fn ble_hid_task(_: *mut c_void) {
         keys: [0; 7],
     };
 
-
     // MAP KEY
     let peripherals = Peripherals::take().unwrap();
 
-    let mut pick_down_btn   = PinDriver::input(peripherals.pins.gpio33).unwrap();
+    let mut pick_down_btn = PinDriver::input(peripherals.pins.gpio33).unwrap();
     let mut pick_up_btn = PinDriver::input(peripherals.pins.gpio25).unwrap();
 
-    let mut cro_btn  = PinDriver::input(peripherals.pins.gpio26).unwrap();
-    let mut cir_btn   = PinDriver::input(peripherals.pins.gpio27).unwrap();
+    let mut cro_btn = PinDriver::input(peripherals.pins.gpio26).unwrap();
+    let mut cir_btn = PinDriver::input(peripherals.pins.gpio27).unwrap();
     let mut srq_btn = PinDriver::input(peripherals.pins.gpio14).unwrap();
-    let mut tri_btn  = PinDriver::input(peripherals.pins.gpio12).unwrap();
+    let mut tri_btn = PinDriver::input(peripherals.pins.gpio12).unwrap();
     let mut l1_btn = PinDriver::input(peripherals.pins.gpio13).unwrap();
 
     let mut start_btn = PinDriver::input(peripherals.pins.gpio4).unwrap();
