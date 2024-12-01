@@ -29,7 +29,7 @@ pub const HID_REPORT_DISCRIPTOR: &[u8] = hid!(
     (REPORT_COUNT, 0x01), //   REPORT_COUNT (1) ; 3 bits (Padding)
     (REPORT_SIZE, 0x03), //   REPORT_SIZE (3)
     (HIDOUTPUT, 0x01), //   OUTPUT (Const,Array,Abs,No Wrap,Linear,Preferred State,No Null Position,Non-volatile)
-    (REPORT_COUNT, 0x06), //   REPORT_COUNT (6) ; 6 bytes (Keys)
+    (REPORT_COUNT, 0x07), //   REPORT_COUNT (6) ; 6 bytes (Keys)
     (REPORT_SIZE, 0x08), //   REPORT_SIZE(8)
     (LOGICAL_MINIMUM, 0x00), //   LOGICAL_MINIMUM(0)
     (LOGICAL_MAXIMUM, 0x65), //   LOGICAL_MAXIMUM(0x65) ; 101 keys
