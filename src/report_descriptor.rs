@@ -1,13 +1,12 @@
-use esp32_nimble::hid::*;
+use esp32_nimble::hid::hid;
 
-pub const KEYBOARD_ID: u8 = 0x01;
+pub const REPORT_ID: u8 = 0x01;
 
-pub const HID_REPORT_DISCRIPTOR: &[u8] = hid!(
+pub const REPORT_MAP: &[u8] = hid!(
     (0x05, 0x01), // USAGE_PAGE (Generic Desktop Ctrls)
     (0x09, 0x04), // USAGE (Gamepad)
     (0xa1, 0x01), // COLLECTION (Application)
     // ------------------------------------------------- Gamepad
-    //(0x85, 0x01), //     REPORT_ID (1)
     // Buttons
     (0x05, 0x09), //     USAGE_PAGE (Button)
     (0x19, 0x01), //     USAGE_MINIMUM (First button 1)
