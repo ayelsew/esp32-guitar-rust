@@ -16,5 +16,14 @@ pub const REPORT_MAP: &[u8] = hid!(
     (0x75, 0x01), //     REPORT_SIZE (1 byte)
     (0x95, 0x08), //     REPORT_COUNT (8 buttons per byte)
     (0x81, 0x02), //     INPUT (Data,Var,Abs)
+    //Whammy
+    (0x05, 0x01), //     USAGE_PAGE (Generic Desktop Controls)
+    (0x09, 0x30), //     Usage (X) - Isso seria o valor do potenciômetro
+    (0x09, 0x31), //     USAGE (Y)
+    (0x15, 0x00), //     Logical Minimum (0)
+    (0x26, 0x3E, 0x0C), //     Logical Maximum (255)
+    (0x75, 0x10), //     Report Size (8 bits)
+    (0x95, 0x01), //     Report Count (1 byte)
+    (0x81, 0x02), //     Input (Data, Variable, Absolute)
     (0xc0),       // END_COLLECTION
 );
